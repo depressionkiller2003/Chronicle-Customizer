@@ -56,4 +56,21 @@ from two small `PORT`-guarded calls into the existing weapon input loop; PS2 bui
 omit those calls.
 
 No personal saves, disc images, extracted game data or prebuilt executable are
-included. Existing GitHub release downloads are separate from this source update.
+stored in this source checkout. Prebuilt Windows packages are published separately
+under GitHub Releases.
+
+## Package a Windows release
+
+With Python 3.11 or newer, use the explicit-allowlist packaging tool:
+
+```powershell
+python tools/package_release.py --framework build/framework `
+  --build build/framework/port/build/windows-x64-release `
+  --dependencies build/framework/.kazarov/windows/deps --output build/releases
+```
+
+Adjust `--dependencies` if the Windows dependency acquisition used another root.
+The tool refuses an existing staging directory to avoid mixing releases. It copies
+only declared executables, runtime DLLs, UI resources, mod source and notices,
+then writes build information and file/ZIP SHA256 checksums. Inspect and test the
+extracted ZIP with a separate save root before publishing it.

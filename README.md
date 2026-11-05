@@ -44,6 +44,22 @@ build-up requirements are still enforced.
 Read the [full usage guide](docs/USAGE.md), [save guidance](docs/SAVE-SAFETY.md),
 and [validation status](docs/TESTING.md).
 
+## Download the latest Windows build
+
+**[Download Chronicle Customizer v0.2.0 for Windows x64](https://github.com/depressionkiller2003/Chronicle-Customizer/releases/download/v0.2.0/Chronicle-Customizer-v0.2.0-windows-x64.zip)**
+
+Extract into a new folder and open `darkcloud.exe` or the included launcher.
+Read `START-HERE.txt`, supply your own supported Dark Cloud game data, and enable
+Chronicle Customizer in the Mod Manager followed by a restart if needed.
+The package contains the current executable, mod, runtime DLLs, UI resources,
+instructions and checksums; no personal saves or extracted game data.
+
+[Release notes](RELEASE-NOTES.md) · [All releases](https://github.com/depressionkiller2003/Chronicle-Customizer/releases)
+· [Latest release](https://github.com/depressionkiller2003/Chronicle-Customizer/releases/latest)
+
+The application release is **v0.2.0**. The mod's saved identity remains
+**`chronicle.customizer` version `1.0.0`** for compatibility.
+
 ## Source and installation
 
 This update publishes the current source and documentation:
@@ -58,10 +74,10 @@ The Lua package needs an executable built with the matching native changes. It
 is not a drop-in replacement for an unmodified upstream Chronicle host. Enable
 it in the Mod Manager and restart after installation.
 
-[GitHub Releases](https://github.com/depressionkiller2003/Chronicle-Customizer/releases)
-contains separately published downloads. Existing v0.1.0-beta/v0.1.1 downloads
-may predate the source features described here; this source update does not
-replace those release assets or claim a new ready-to-play binary release.
+The v0.2.0 Windows release matches the current feature set above. Earlier
+v0.1.0-beta/v0.1.1 downloads remain available for history and do not contain all
+current features. Upgrade by extracting v0.2.0 into a new folder; preserve your
+save backups and avoid mixing old executables or duplicate mod folders.
 
 No disc images, extracted game data, personal saves, local recovery copies or
 prebuilt executable are included in this source update. Supply your own supported

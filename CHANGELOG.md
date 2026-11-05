@@ -1,6 +1,16 @@
 # Development changelog
 
-## 5 November 2026 — Current Customizer progress
+## v0.2.0 — 5 November 2026
+
+- Updated Windows x64 download to the current built executable and mod.
+- Packaged runtime DLLs, UI resources, instructions, credits/notices, source
+  revision metadata, an internal file hash manifest and an external ZIP checksum.
+- Created an allowlist-based packaging script to exclude developer backups,
+  save/config/profile files, extracted game data and disc images.
+- Updated README download links and release instructions; previous releases and
+  tags remain available. Mod save identity stays `chronicle.customizer` `1.0.0`.
+
+### Features included in v0.2.0
 
 - Added HP and DEF editing for all six characters, using integer Lua arguments.
 - Grouped the 13 actions into Custom Gilda and ordered character folders:
@@ -24,6 +34,6 @@ branching/terminal trees, the button, controller Back and named build-up choices
 Other character paths, mouse input, recruitment transitions and broader gameplay
 remain manual. See [validation details](docs/TESTING.md).
 
-This source update preserves the existing repository history and release tags.
-It does not replace earlier GitHub release downloads, run a save migration or
-include saves, game data, backups, an executable or a new binary release.
+The v0.2.0 binary release supersedes earlier downloads without deleting them.
+It does not run a save migration or include saves, extracted game data or backups.
+The source checkout remains separate from the downloadable Windows executable.
