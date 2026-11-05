@@ -1,0 +1,7 @@
+{
+  "repository": "https://github.com/anxiousintrovert/Chronicle-Mod-Framework.git",
+  "commit": "17b20f181db2106f65d03809adc5fcc12b050cf3",
+  "patch": "chronicle-customizer.patch",
+  "mod_id": "chronicle.customizer",
+  "mod_version": "1.0.0"
+}

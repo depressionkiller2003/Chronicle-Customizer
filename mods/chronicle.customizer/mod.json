@@ -1,0 +1,19 @@
+{
+  "schema_version": 1,
+  "id": "chronicle.customizer",
+  "name": "Chronicle Customizer",
+  "version": "1.0.0",
+  "game": "chronicle",
+  "requires": [],
+  "conflicts": [],
+  "files": {},
+  "api_version": 1,
+  "script": "main.lua",
+  "permissions": [
+    "economy.write",
+    "game.write"
+  ],
+  "requires_capabilities": [
+    "menu.actions.v1"
+  ]
+}

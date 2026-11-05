@@ -1,0 +1,1255 @@
+diff --git a/.github/workflows/customizer.yml b/.github/workflows/customizer.yml
+new file mode 100644
+index 0000000000000000000000000000000000000000..922fb2e33b5c9bd930b1a9429cfe73e3cbe26ad7
+--- /dev/null
++++ b/.github/workflows/customizer.yml
+@@ -0,0 +1,36 @@
++name: Customizer regression checks
++
++on:
++  push:
++    branches: [main, master]
++  pull_request:
++  workflow_dispatch:
++
++permissions:
++  contents: read
++
++jobs:
++  customizer:
++    runs-on: ubuntu-latest
++    steps:
++      - uses: actions/checkout@v7
++      - name: Validate package and author tools
++        run: |
++          python3 tools/chronicle_mod.py check examples/mods/chronicle-customizer
++          python3 -m unittest discover -s tools/tests
++      - name: Check numeric rules, story locks and weapon-tree ordering
++        run: |
++          mkdir -p build/customizer-checks
++          clang++ -std=c++20 -I port/src tools/tests/customizer_numeric.cpp -o build/customizer-checks/numeric
++          clang++ -std=c++20 -I port/src tools/tests/customizer_weapon_tree.cpp -o build/customizer-checks/tree
++          build/customizer-checks/numeric
++          build/customizer-checks/tree
++      - name: Check actual package callbacks with vendored Lua
++        shell: bash
++        run: |
++          sources=()
++          for source in port/third_party/lua/*.c; do
++            if [[ "$source" != */luac.c ]]; then sources+=("$source"); fi
++          done
++          clang -O2 -DLUA_USE_LINUX "${sources[@]}" -lm -ldl -o build/customizer-checks/lua
++          build/customizer-checks/lua tools/tests/customizer_actions.lua
+diff --git a/examples/mods/chronicle-customizer/README.md b/examples/mods/chronicle-customizer/README.md
+new file mode 100644
+index 0000000000000000000000000000000000000000..a9794b4c6e51bdcca7a0ecce405c7eb9a069d488
+--- /dev/null
++++ b/examples/mods/chronicle-customizer/README.md
+@@ -0,0 +1,20 @@
++# Chronicle Customizer
++
++Source package for `chronicle.customizer` version `1.0.0`, paired with the native
++Customizer support in this fork of Chronicle. No game data is included.
++
++Provides Custom Gilda and HP/DEF editing for Toan, Xiao, Goro, Ruby, Ungaga and
++Osmond. The host groups the 13 actions into six ordered character folders plus
++Custom Gilda and locks unrecruited characters. Enabling this package also enables
++the native weapon menu's tree preview and revealed build-up destination names.
++
++Copy this directory to `mods/chronicle.customizer` beside the built executable
++or into your chosen save root's `mods` directory. Enable it in **Options → Mods →
++Mod Manager** and restart. Avoid duplicate installed copies.
++
++This package uses `economy.write` and `game.write`, and requires `menu.actions.v1`.
++It is not compatible with an unmodified upstream host that lacks this fork's
++numeric-input and native menu integration.
++
++Read the [complete guide](../../../docs/CHRONICLE_CUSTOMIZER.md) for controls,
++input ranges, save behavior, validation and remaining gameplay checks.
+diff --git a/examples/mods/chronicle-customizer/main.lua b/examples/mods/chronicle-customizer/main.lua
+new file mode 100644
+index 0000000000000000000000000000000000000000..2f1fc5dc086b0bdd16800555829539c7f55cd6d7
+--- /dev/null
++++ b/examples/mods/chronicle-customizer/main.lua
+@@ -0,0 +1,49 @@
++local mod = {}
++
++chronicle.action(
++    "custom_gilda",
++    "Custom Gilda",
++    "Enter an amount to add to your Gilda balance.",
++    function(world)
++        local amount = tonumber(chronicle.get("custom_gilda_amount")) or 0
++
++        if amount < 1 or amount > 65535 then
++            return
++        end
++
++        local remaining = amount
++
++        while remaining > 0 do
++            local chunk = math.min(remaining, 32767)
++            chronicle.add_money(chunk)
++            remaining = remaining - chunk
++        end
++    end
++)
++
++-- Each registration is a direct action in the same flat menu.
++-- Capture each character in this function so callbacks keep their own ID.
++local function register_character(id, key, name)
++    chronicle.action(key .. "_hp", name .. " - HP", "Set " .. name .. "'s maximum HP (1-32767). Requires a joined character; does not heal.", function(world)
++        local value = tonumber(chronicle.get(key .. "_hp_amount"))
++        if value and value >= 1 and value <= 32767 then
++            chronicle.call("player.max_hp_set", {character = id, max_hp = math.floor(value)})
++        end
++    end)
++
++    chronicle.action(key .. "_def", name .. " - DEF", "Set " .. name .. "'s defense (0-32767). Requires a joined character.", function(world)
++        local value = tonumber(chronicle.get(key .. "_def_amount"))
++        if value and value >= 0 and value <= 32767 then
++            chronicle.call("player.defense_set", {character = id, defense = math.floor(value)})
++        end
++    end)
++end
++
++register_character(0, "toan", "Toan")
++register_character(1, "xiao", "Xiao")
++register_character(2, "goro", "Goro")
++register_character(3, "ruby", "Ruby")
++register_character(4, "ungaga", "Ungaga")
++register_character(5, "osmond", "Osmond")
++
++return mod
+diff --git a/examples/mods/chronicle-customizer/mod.json b/examples/mods/chronicle-customizer/mod.json
+new file mode 100644
+index 0000000000000000000000000000000000000000..1fb67bff73258794e4284819cc95653338a2b81b
+--- /dev/null
++++ b/examples/mods/chronicle-customizer/mod.json
+@@ -0,0 +1,19 @@
++{
++  "schema_version": 1,
++  "id": "chronicle.customizer",
++  "name": "Chronicle Customizer",
++  "version": "1.0.0",
++  "game": "chronicle",
++  "requires": [],
++  "conflicts": [],
++  "files": {},
++  "api_version": 1,
++  "script": "main.lua",
++  "permissions": [
++    "economy.write",
++    "game.write"
++  ],
++  "requires_capabilities": [
++    "menu.actions.v1"
++  ]
++}
+diff --git a/port/include/weapon_tree_port.hpp b/port/include/weapon_tree_port.hpp
+new file mode 100644
+index 0000000000000000000000000000000000000000..e778fb8997462574e2ab3eb700f1b2f853b20679
+--- /dev/null
++++ b/port/include/weapon_tree_port.hpp
+@@ -0,0 +1,10 @@
++#pragma once
++
++// Small host bridge: retail units do not depend on the Lua/runtime headers.
++namespace mods::menu {
++bool IsWeaponTreeOpen();
++void RunWeaponTree();
++}
++namespace mods::weapons {
++bool HandleTreeAction(int options);
++}
+diff --git a/port/src/battlemenu/weapon_menu.cpp b/port/src/battlemenu/weapon_menu.cpp
+index 8fe17455046f97e5c1a28845ebb79b5a8f4042df..47b38492eb1c2769070c2694e018b68a9f0a51b2 100644
+--- a/port/src/battlemenu/weapon_menu.cpp
++++ b/port/src/battlemenu/weapon_menu.cpp
+@@ -1,4 +1,7 @@
+ #include "battlemenu/internal.hpp"
++#include "mods/menu.hpp"
++#include "mods/weapon_browser.hpp"
++#include "mods/weapon_tree.hpp"
+ 
+ namespace {
+ 
+@@ -408,6 +411,13 @@ PORT_OVERRIDE void DrawWeaponSelectDialog(int x, int y, int alpha) {
+         }
+     }
+ 
++    if (mods::weapons::TreeEnabled() && WepMenu.mode == WEP_MENU_ACTION) {
++        auto style = UI::ButtonStyle::Thin(UI::ButtonPreset::AmberGold, 0x98);
++        style.text_scale = 0.66f;
++        style.text_xscale = 0.92f;
++        UI::BevelButton::Draw(UI::Rect(left, dest_y, 118, btn_h), "View Build-up Tree", style, alpha);
++    }
++
+     if (WepMenu.state == WEP_STATE_SCRAP_PROMPT || WepMenu.state == WEP_STATE_SCRAP_CONFIRM) {
+         UI::BevelButton::Draw(
+             UI::Rect(x + 0x64, y + 0x33, btn_w, btn_h),
+@@ -499,9 +509,9 @@ PORT_OVERRIDE void DrawBuildUpWeaponSelect(int x, int y, int cursor) {
+ 
+         std::string target_name = "???";
+         u32         text_col    = UI::ColorWhite;
+-        if (builds[i].enabled != 0 && builds[i].weapon_no > 0) {
++        if (builds[i].weapon_no > 0 && (builds[i].enabled != 0 || mods::weapons::TreeEnabled())) {
+             target_name = DecodeItemNamePort(builds[i].weapon_no, "???");
+-            text_col    = selected ? UI::ColorYellow : UI::ColorWhite;
++            text_col    = builds[i].enabled != 0 ? (selected ? UI::ColorYellow : UI::ColorWhite) : UI::ColorBlue;
+         }
+ 
+         const UI::TextStyle banner_txt{
+@@ -784,6 +794,10 @@ PORT_OVERRIDE void BtlWeaponDraw(int x, float depth, int chara, int alpha) {
+ }
+ 
+ PORT_OVERRIDE void WeaponMenuDraw() {
++    if (mods::menu::IsWeaponTreeOpen()) {
++        mods::menu::DrawWeaponTree();
++        return;
++    }
+     RefreshBtlMenuTextures();
+     int alpha = 0x80;
+ 
+@@ -1040,12 +1054,16 @@ PORT_OVERRIDE void WeaponMenuDraw() {
+                 WepMenu.state != WEP_STATE_SCRAP_CONFIRM) {
+                 int       offset_y = 0;
+                 const int options  = NowWeaponStatusValuePort(&DngWepHavePt[static_cast<int>(WepMenu.weapon_slot)]);
+-                for (int i = 4; WepMenu.board.cursor >= i; i++) {
++                for (int i = 4; std::min(static_cast<int>(WepMenu.board.cursor), 6) >= i; i++) {
+                     if (options & (1 << (i - 3))) {
+                         offset_y += 0x1A;
+                     }
+                 }
+                 cursor_y = dialog_pos + 0x4E + offset_y;
++                if (WepMenu.board.cursor == mods::weapons::TreeAction) {
++                    cursor_y += 0x1A;
++                    frame.width = 118;
++                }
+                 frame.y  = cursor_y - 6;
+             }
+             break;
+@@ -1143,4 +1161,4 @@ PORT_OVERRIDE void WeaponMenuDraw() {
+             return;
+         }
+     }
+-}
+\ No newline at end of file
++}
+diff --git a/port/src/menu_mouse.cpp b/port/src/menu_mouse.cpp
+index ef839f56a073557f26702cdec943f856adb883c2..0c681ba3f418e7f487744b60359a9d46c556f47c 100644
+--- a/port/src/menu_mouse.cpp
++++ b/port/src/menu_mouse.cpp
+@@ -1,4 +1,7 @@
+ #include "menu_pointer.hpp"
++#include "mods/menu.hpp"
++#include "mods/weapon_browser.hpp"
++#include "mods/weapon_tree.hpp"
+ 
+ #include <algorithm>
+ #include <cmath>
+@@ -759,6 +762,7 @@ int WeaponActionRows(int *cursors) {
+             cursors[count++] = i + 3;
+         }
+     }
++    if (mods::weapons::TreeEnabled()) cursors[count++] = mods::weapons::TreeAction;
+     return count;
+ }
+ 
+@@ -838,11 +842,11 @@ bool WeaponMouse(const MenuPointerTake &take) {
+             if (!take.pointing) {
+                 return true;
+             }
+-            int cursors[7];
++            int cursors[8];
+             int count = WeaponActionRows(cursors);
+             int hit = -1;
+             for (int k = 0; k < count; ++k) {
+-                Rect row = {114, 115 + 26 * k, 210, 115 + 26 * k + 26};
++                Rect row = {114, 115 + 26 * k, cursors[k] == mods::weapons::TreeAction ? 232 : 210, 115 + 26 * k + 26};
+                 if (row.Contains(x, y)) {
+                     hit = cursors[k];
+                 }
+@@ -990,6 +994,10 @@ bool WeaponMouse(const MenuPointerTake &take) {
+ }
+ 
+ void BattleMouse() {
++    if (mods::menu::IsWeaponTreeOpen()) {
++        MenuPointerShow(nullptr);
++        return;
++    }
+     if (!g_battle.IsOpen()) {
+         g_battle.Open();
+     }
+diff --git a/port/src/mods/customizer.hpp b/port/src/mods/customizer.hpp
+new file mode 100644
+index 0000000000000000000000000000000000000000..5ed2872142e2f58bfa6364fee0aa815373d05160
+--- /dev/null
++++ b/port/src/mods/customizer.hpp
+@@ -0,0 +1,54 @@
++#pragma once
++
++#include <array>
++#include <string_view>
++
++namespace mods::customizer {
++struct Character {
++    std::string_view key, name;
++};
++
++inline constexpr std::array<Character, 6> characters{{
++    {"toan", "Toan"}, {"xiao", "Xiao"}, {"goro", "Goro"},
++    {"ruby", "Ruby"}, {"ungaga", "Ungaga"}, {"osmond", "Osmond"},
++}};
++
++inline constexpr bool CharacterUnlocked(int character, int party_size) {
++    return character >= 0 && character < static_cast<int>(characters.size()) && character < party_size;
++}
++
++struct NumericAction {
++    std::string_view id, prompt;
++    int minimum, maximum;
++};
++
++inline constexpr std::array<NumericAction, 13> actions{{
++    {"custom_gilda", "Enter Gilda: ", 1, 65535},
++    {"toan_hp", "Enter Toan HP: ", 1, 32767},
++    {"toan_def", "Enter Toan DEF: ", 0, 32767},
++    {"xiao_hp", "Enter Xiao HP: ", 1, 32767},
++    {"xiao_def", "Enter Xiao DEF: ", 0, 32767},
++    {"goro_hp", "Enter Goro HP: ", 1, 32767},
++    {"goro_def", "Enter Goro DEF: ", 0, 32767},
++    {"ruby_hp", "Enter Ruby HP: ", 1, 32767},
++    {"ruby_def", "Enter Ruby DEF: ", 0, 32767},
++    {"ungaga_hp", "Enter Ungaga HP: ", 1, 32767},
++    {"ungaga_def", "Enter Ungaga DEF: ", 0, 32767},
++    {"osmond_hp", "Enter Osmond HP: ", 1, 32767},
++    {"osmond_def", "Enter Osmond DEF: ", 0, 32767},
++}};
++
++inline const NumericAction *Find(std::string_view id) {
++    for (const auto &action : actions) {
++        if (action.id == id) {
++            return &action;
++        }
++    }
++    return nullptr;
++}
++
++inline bool IsNumericRequest(std::string_view owner, std::string_view id) {
++    const auto separator = id.find(':');
++    return owner == "chronicle.customizer" && separator != std::string_view::npos && Find(id.substr(0, separator));
++}
++} // namespace mods::customizer
+diff --git a/port/src/mods/game.cpp b/port/src/mods/game.cpp
+index d59efab0de90cefe731940288e19cd1ddc7fb689..51abdd339488ffcd4ddfe3d723c3daa2cb711f49 100644
+--- a/port/src/mods/game.cpp
++++ b/port/src/mods/game.cpp
+@@ -123,6 +123,14 @@ nlohmann::json ReadSnapshot(std::string_view service) {
+ }
+ } // namespace
+ 
++int JoinedCharacterCount() {
++    if (!SaveData || (mode != GAME_MODE_EDIT && mode != GAME_MODE_DUNGEON)) {
++        return 0;
++    }
++    const auto *status = SaveData->GetDngStatus();
++    return status ? std::clamp(static_cast<int>(status->party_size), 0, 6) : 0;
++}
++
+ void TickGame() {
+     static std::uint64_t entity_epoch = 0;
+     if (entity_epoch != Scripts().Epoch()) {
+diff --git a/port/src/mods/menu.cpp b/port/src/mods/menu.cpp
+index dcaf15d0b54971c3ba4ae5df3e8c9c7cd3f243a8..4520195b9778b3c19134c3d5025efefd18f680e1 100644
+--- a/port/src/mods/menu.cpp
++++ b/port/src/mods/menu.cpp
+@@ -1,8 +1,13 @@
+ #include "menu.hpp"
+ 
+ #include <algorithm>
++#include <SDL3/SDL.h>
+ #include <map>
++#include <utility>
++#include <vector>
+ 
++#include "customizer.hpp"
++#include "weapon_browser.hpp"
+ #include "gamepad.hpp"
+ #include "gameutil.hpp"
+ #include "platform/input.hpp"
+@@ -32,6 +37,12 @@ std::string              trust_id, trust_fingerprint, trust_permissions;
+ bool                     trust_value = false;
+ std::string              action_owner, action_error;
+ int                      action_selected = 0, action_detail = 0;
++int                      character_folder = -1;
++bool                     native_weapon_tree = false;
++std::vector<ActionStatus> native_tree_rows;
++bool                     gilda_input_active = false;
++std::string              numeric_action_id = "custom_gilda";
++std::string              gilda_input = "12500";
+ UI::ListView             action_list({
+     .bounds = {42, 150, 226, 189},
+     .row_height = 24,
+@@ -41,6 +52,59 @@ UI::ListView             action_list({
+     .draw_cursor = false
+ });
+ 
++bool NumericCharacterUnlocked(std::string_view id) {
++    if (id == "custom_gilda") {
++        return true;
++    }
++    for (int i = 0; i < static_cast<int>(customizer::characters.size()); ++i) {
++        const auto key = std::string(customizer::characters[i].key);
++        if (id == key + "_hp" || id == key + "_def") {
++            return customizer::CharacterUnlocked(i, JoinedCharacterCount());
++        }
++    }
++    return false;
++}
++
++void OnGildaKey(const SDL_Event &event) {
++    if (!open || !gilda_input_active || event.type != SDL_EVENT_KEY_DOWN)
++        return;
++
++    const auto key = event.key.key;
++
++    if (key == SDLK_BACKSPACE) {
++        if (!gilda_input.empty())
++            gilda_input.pop_back();
++    } else if (key == SDLK_ESCAPE) {
++        gilda_input_active = false;
++    } else if (key == SDLK_RETURN || key == SDLK_KP_ENTER) {
++        if (!gilda_input.empty()) {
++            const int amount = std::stoi(gilda_input);
++            const auto *spec = customizer::Find(numeric_action_id);
++            if (!NumericCharacterUnlocked(numeric_action_id)) {
++                action_error = "Locked: this character has not joined your party.";
++            } else if (spec && amount >= spec->minimum && amount <= spec->maximum) {
++                Scripts().QueueAction(
++                    "chronicle.customizer",
++                    numeric_action_id + ":" + std::to_string(amount),
++                    action_error
++                );
++            } else {
++                action_error = spec ? "Enter an amount between " + std::to_string(spec->minimum) + " and " + std::to_string(spec->maximum) + "."
++                                    : "Unknown numeric action.";
++            }
++        }
++        gilda_input_active = false;
++    } else {
++        int digit = -1;
++        if (key >= SDLK_0 && key <= SDLK_9)
++            digit = static_cast<int>(key - SDLK_0);
++        else if (key >= SDLK_KP_0 && key <= SDLK_KP_9)
++            digit = static_cast<int>(key - SDLK_KP_0);
++
++        if (digit >= 0 && gilda_input.size() < 5)
++            gilda_input += static_cast<char>('0' + digit);
++    }
++}
+ // Manifest strings are literal text, never game message control codes.
+ std::string Literal(std::string value) {
+     for (std::size_t p = 0; (p = value.find('{', p)) != std::string::npos; p += 2) {
+@@ -152,15 +216,67 @@ std::string SelectedActionOwner() {
+     return {};
+ }
+ 
+-void OpenActions() {
+-    action_owner = SelectedActionOwner();
+-    action_selected = action_detail = 0;
++// Folder rows are a view of the same registered actions; no save IDs change.
++std::vector<ActionStatus> VisibleActions() {
++    if (native_weapon_tree) return native_tree_rows;
++    const auto actions = Scripts().Actions(action_owner);
++    if (action_owner != "chronicle.customizer") {
++        return actions;
++    }
++    std::vector<ActionStatus> visible;
++    const auto append = [&](std::string_view id, bool short_title) {
++        for (auto action : actions) {
++            if (action.id == id) {
++                if (short_title) {
++                    const bool unlocked = NumericCharacterUnlocked(action.id);
++                    action.title = std::string(action.id.ends_with("_hp") ? "HP" : "DEF") + (unlocked ? "" : " (Locked)");
++                    action.available = action.available && unlocked;
++                    if (!unlocked) {
++                        action.description = "Locked: this character has not joined your party. Progress the story to unlock them.";
++                    }
++                }
++                visible.push_back(std::move(action));
++                break;
++            }
++        }
++    };
++    if (character_folder < 0) {
++        append("custom_gilda", false);
++        const int joined = JoinedCharacterCount();
++        for (int i = 0; i < static_cast<int>(customizer::characters.size()); ++i) {
++            const auto &character = customizer::characters[i];
++            const bool unlocked = customizer::CharacterUnlocked(i, joined);
++            visible.push_back({action_owner, "folder:" + std::string(character.key),
++                               std::string(character.name) + (unlocked ? " >" : " (Locked)"),
++                               unlocked ? "Open " + std::string(character.name) + "'s HP and DEF actions."
++                                        : "Locked: this character has not joined your party. Progress the story to unlock them.",
++                               {}, unlocked});
++        }
++    } else {
++        const auto key = std::string(customizer::characters[character_folder].key);
++        append(key + "_hp", true);
++        append(key + "_def", true);
++    }
++    return visible;
++}
++
++void ResetActionView(int selection = 0) {
++    action_selected = selection;
++    action_detail = 0;
+     action_error.clear();
++    gilda_input_active = false;
++    gilda_input.clear();
+     action_list.Reset();
+ }
+ 
++void OpenActions() {
++    action_owner = SelectedActionOwner();
++    character_folder = -1;
++    ResetActionView();
++}
++
+ void RunActions(std::uint16_t pressed) {
+-    const auto actions = Scripts().Actions(action_owner);
++    const auto actions = VisibleActions();
+     const int  count = static_cast<int>(actions.size());
+     if (pressed) {
+         pointer = false;
+@@ -177,7 +293,16 @@ void RunActions(std::uint16_t pressed) {
+         pointer = true;
+     }
+     if ((pressed & PAD_CIRCLE) || (clicked & 2) || ((clicked & 1) && Inside(490, 393, 100, 28))) {
+-        action_owner.clear();
++        if (native_weapon_tree) {
++            Close();
++        } else if (character_folder >= 0) {
++            const int selection = character_folder + 1;
++            character_folder = -1;
++            ResetActionView(selection);
++        } else {
++            action_owner.clear();
++            ResetActionView();
++        }
+         return;
+     }
+     const int previous = action_selected;
+@@ -218,15 +343,43 @@ void RunActions(std::uint16_t pressed) {
+     }
+     action_detail = std::max(0, action_detail);
+     if (count && ((pressed & PAD_CROSS) || ((clicked & 1) && Inside(42, 393, 160, 28)))) {
+-        Scripts().QueueAction(action_owner, actions[action_selected].id, action_error);
++        if (native_weapon_tree) {
++            ++action_detail;
++        } else if (action_owner == "chronicle.customizer" && actions[action_selected].id.starts_with("folder:")) {
++            if (actions[action_selected].available) {
++                character_folder = action_selected - 1;
++                ResetActionView();
++            } else {
++                action_error = "Locked: this character has not joined your party.";
++            }
++        } else if (action_owner == "chronicle.customizer" && customizer::Find(actions[action_selected].id)) {
++            if (!actions[action_selected].available || !NumericCharacterUnlocked(actions[action_selected].id)) {
++                action_error = "Unavailable: gameplay stopped or character has not joined.";
++                return;
++            }
++            numeric_action_id = actions[action_selected].id;
++            gilda_input_active = true;
++            gilda_input.clear();
++            action_error = "Type a number using the keyboard, then press Enter.";
++        } else {
++            Scripts().QueueAction(action_owner, actions[action_selected].id, action_error);
++        }
+     }
+ }
+ 
+ void DrawActions() {
+     UI::Divider::DrawVertical(282, 148, 348);
+-    Text(0, "Mod Actions", 42, 94, 540, true);
+-    Text(1, Literal(action_owner) + " - current run", 42, 120, 550);
+-    const auto actions = Scripts().Actions(action_owner);
++    const std::string heading = action_owner == "chronicle.customizer" && character_folder >= 0
++                                    ? "Mod Actions / " + std::string(customizer::characters[character_folder].name)
++                                    : "Mod Actions";
++    if (native_weapon_tree) {
++        UI::TrackerWindow::DrawStoneBanner(UI::Rect(34, 86, 565, 29), 0x80, 0x80, "BUILD-UP TREE");
++    } else {
++        Text(0, heading, 42, 94, 540, true);
++    }
++    Text(1, native_weapon_tree ? std::string(customizer::characters[character_folder].name) + " / Weapon paths / Preview"
++                              : Literal(action_owner == "chronicle.customizer" ? std::string("Chronicle Customizer") : action_owner) + " - current run", 42, 120, 550);
++    const auto actions = VisibleActions();
+     const int  count = static_cast<int>(actions.size());
+     action_selected = std::clamp(action_selected, 0, std::max(0, count - 1));
+     action_list.SetSelectedIndex(action_selected, count);
+@@ -236,12 +389,24 @@ void DrawActions() {
+     std::string body = "No actions available in this run.";
+     if (count) {
+         const auto &a = actions[action_selected];
+-        body = a.id;
++        const bool folder = native_weapon_tree || a.id.starts_with("folder:");
++        body = folder ? a.title : a.id;
+         if (!a.result.empty()) {
+             body += "\n\n" + a.result;
+         }
+-        body += std::string("\n\n") + (a.available ? "Ready. Runs on the next gameplay tick." : "Unavailable: gameplay or package stopped.");
++        if (!folder) {
++            body += std::string("\n\n") + (a.available ? "Ready. Runs on the next gameplay tick." : "Unavailable: gameplay or package stopped.");
++        }
+         body += "\n\n" + a.description;
++        if (action_owner == "chronicle.customizer" && a.id == "custom_gilda") {
++            body += "\n\nGILDA - IMPORTANT";
++            body += "\n\nEnter an amount from 1 to 65535.";
++            body += "\n\nThis ADDS to your existing Gilda.";
++            body += "\nIt does NOT replace your balance.";
++            body += "\n\nYour current Gilda + entered amount";
++            body += "\nmust NOT exceed 65535.";
++            body += "\n\nExample: 10000 + 5000 = 15000.";
++        }
+     }
+     if (!action_error.empty()) {
+         body = action_error + "\n\n" + body;
+@@ -252,8 +417,14 @@ void DrawActions() {
+     for (int i = 0; i < 9 && action_detail * 9 + i < static_cast<int>(lines.size()); ++i) {
+         Text(40 + i, Literal(lines[action_detail * 9 + i]), 295, 150 + i * 21, 300);
+     }
+-    Text(60, "<  Details " + std::to_string(action_detail + 1) + "/" + std::to_string(pages) + "  >", 300, 365, 285);
+-    Text(61, "{cross} Run", 42, 395, 160);
++    if (gilda_input_active) {
++        Text(60, std::string(customizer::Find(numeric_action_id)->prompt) + gilda_input + "_", 300, 365, 285, true);
++        Text(61, "Type digits / Backspace / Enter", 42, 395, 440);
++    } else {
++        const bool folder = count && actions[action_selected].id.starts_with("folder:");
++        Text(61, count && !actions[action_selected].available ? "Locked / Unavailable" : native_weapon_tree ? "{cross} Details" : folder ? "{cross} Open" : "{cross} Run", 42, 395, 220);
++        Text(60, "<  Details " + std::to_string(action_detail + 1) + "/" + std::to_string(pages) + "  >", 300, 365, 285);
++    }
+     Text(63, "{circle} Back", 490, 395, 110);
+     if (pointer) {
+         cursor.SetPointer(px, py);
+@@ -263,6 +434,11 @@ void DrawActions() {
+ } // namespace
+ 
+ void Open() {
++    static bool keyboard_registered = false;
++    if (!keyboard_registered) {
++        WindowAddEventHook(OnGildaKey);
++        keyboard_registered = true;
++    }
+     Shared().Refresh();
+     open = true;
+     pointer = false;
+@@ -274,10 +450,41 @@ void Open() {
+ }
+ 
+ void Close() {
++    native_weapon_tree = false;
++    native_tree_rows.clear();
+     open = false;
+     action_owner.clear();
+ }
+ 
++void OpenWeaponTree(int character, int slot) {
++    if (!customizer::CharacterUnlocked(character, JoinedCharacterCount())) return;
++    native_tree_rows = weapons::Tree(character, slot);
++    native_weapon_tree = true;
++    open = true;
++    action_owner = "chronicle.customizer";
++    character_folder = character;
++    pointer = false;
++    buttons = InputTakeMenuMouse().buttons;
++    ResetActionView();
++}
++
++bool IsWeaponTreeOpen() { return native_weapon_tree; }
++
++void RunWeaponTree() {
++    if (native_weapon_tree) {
++        std::uint16_t pressed = 0;
++        for (const auto button : {PAD_UP, PAD_DOWN, PAD_LEFT, PAD_RIGHT, PAD_CROSS, PAD_CIRCLE}) {
++            if (GamePad.Down(button)) pressed |= button;
++        }
++        RunActions(pressed);
++    }
++}
++
++void DrawWeaponTree() {
++    UI::TrackerWindow::Draw(24, 76, 592, 344);
++    DrawActions();
++}
++
+ bool IsOpen() { return open; }
+ 
+ void Run(std::uint16_t pressed) {
+@@ -422,7 +629,7 @@ void Draw() {
+     std::string body;
+     if (selected < static_cast<int>(packages.size())) {
+         const auto &p = packages[selected];
+-        body = p.id + "  " + p.version + "\nNext run: " + (!p.problems.empty() ? "BLOCKED" : p.enabled ? "ENABLED"
++        body = (p.id == "chronicle.customizer" ? std::string("Chronicle Customizer") : p.id) + "  " + p.version + "\nNext run: " + (!p.problems.empty() ? "BLOCKED" : p.enabled ? "ENABLED"
+                                                                                                        : "DISABLED");
+         bool active = false;
+         for (const auto &a : Shared().Active().Packages()) {
+diff --git a/port/src/mods/menu.hpp b/port/src/mods/menu.hpp
+index 19771d509fe56c14c378984b0e9c5b3f08032d30..31107a26d7b46b9432f3f66a126aaca7f6dc308c 100644
+--- a/port/src/mods/menu.hpp
++++ b/port/src/mods/menu.hpp
+@@ -7,4 +7,8 @@ void Close();
+ bool IsOpen();
+ void Run(std::uint16_t pressed);
+ void Draw();
++void OpenWeaponTree(int character, int slot);
++bool IsWeaponTreeOpen();
++void RunWeaponTree();
++void DrawWeaponTree();
+ } // namespace mods::menu
+diff --git a/port/src/mods/retail_inventory.cpp b/port/src/mods/retail_inventory.cpp
+index 4f7b30915c0417041941ab599cc32fc8aa5d0fcf..8fd389f0e37b919c4697e9f83de3b8e68ea59dae 100644
+--- a/port/src/mods/retail_inventory.cpp
++++ b/port/src/mods/retail_inventory.cpp
+@@ -161,13 +161,7 @@ Json BuildUps(const CUserStatus &s, const Json &a, std::optional<int> mardan_fis
+         });
+         return result;
+     }
+-    const int base = GetDefaultWeaponNo(source.owner);
+-    for (int position = 2; position <= MenuCharaWeaponMax[source.owner]; ++position) {
+-        const int bit = position <= 20 ? position : position - 20;
+-        if (bit >= 32 || !((position <= 20 ? source.buildup_mask0 : source.buildup_mask1) & (1u << bit))) {
+-            continue;
+-        }
+-        const int   item = base + position;
++    for (const int item : BuildUpTargets(weapon.item_no)) {
+         const auto &d = Definition(item);
+         if (d.owner != source.owner) {
+             throw std::runtime_error("invalid retail build-up target owner");
+@@ -246,6 +240,27 @@ void Synthesize(CUserStatus &s, const Json &a) {
+ }
+ } // namespace
+ 
++std::vector<int> BuildUpTargets(int item) {
++    const auto &source = Definition(item);
++    if (item == ITEM_WEAPON_MARDAN_EINS || item == ITEM_WEAPON_MARDAN_TWEI) {
++        return {item + 1};
++    }
++    std::vector<int> targets;
++    const int base = GetDefaultWeaponNo(source.owner);
++    for (int position = 2; position <= MenuCharaWeaponMax[source.owner]; ++position) {
++        const int bit = position <= 20 ? position : position - 20;
++        if (bit >= 32 || !((position <= 20 ? source.buildup_mask0 : source.buildup_mask1) & (1u << bit))) {
++            continue;
++        }
++        const int target = base + position;
++        if (Definition(target).owner != source.owner) {
++            throw std::runtime_error("invalid retail build-up target owner");
++        }
++        targets.push_back(target);
++    }
++    return targets;
++}
++
+ bool Handles(std::string_view op) {
+     return op == "inventory.count" || op == "inventory.give" || op == "inventory.remove" ||
+            op == "weapons.give" || op == "weapons.abs_get" || op == "weapons.abs_add" ||
+diff --git a/port/src/mods/retail_inventory.hpp b/port/src/mods/retail_inventory.hpp
+index 32ca94ae410c6cd55c30586aab88a9d3bea2d8c1..66fb15c70e0fed840dfecff6252484367d3a652c 100644
+--- a/port/src/mods/retail_inventory.hpp
++++ b/port/src/mods/retail_inventory.hpp
+@@ -5,6 +5,8 @@
+ class CUserStatus;
+ 
+ namespace mods::retail {
++// Deterministic definition links, including the special Mardan progression.
++std::vector<int> BuildUpTargets(int item);
+ // Adapter for existing Chronicle definitions only, not a custom-content registry.
+ bool           Handles(std::string_view operation);
+ std::string    Validate(std::string_view operation, const nlohmann::json &arguments);
+diff --git a/port/src/mods/runtime.cpp b/port/src/mods/runtime.cpp
+index 72183ea7966a430663b7aaccdee9fd6c4cef5de4..0146d69c9c387c851c8a94383efa2df98dcd8697 100644
+--- a/port/src/mods/runtime.cpp
++++ b/port/src/mods/runtime.cpp
+@@ -3,6 +3,7 @@
+ #include <nlohmann/json.hpp>
+ 
+ #include "api.hpp"
++#include "customizer.hpp"
+ #include "arguments.hpp"
+ #include "native.hpp"
+ extern "C" {
+@@ -1123,7 +1124,13 @@ void Runtime::Tick(const World &world, const std::function<bool(int)> &money, co
+     for (auto &ptr : impl_->modules) {
+         for (const auto &[owner, id] : actions) {
+             if (owner == ptr->package.id) {
+-                ptr->actions.at(id).result = "Canceled: gameplay context changed or package unavailable.";
++                const std::string lookup_id =
++                    customizer::IsNumericRequest(owner, id)
++                        ? id.substr(0, id.find(':'))
++                        : id;
++                if (auto found = ptr->actions.find(lookup_id); found != ptr->actions.end()) {
++                    found->second.result = "Canceled: gameplay context changed or package unavailable.";
++                }
+             }
+         }
+     }
+@@ -1201,10 +1208,20 @@ void Runtime::Tick(const World &world, const std::function<bool(int)> &money, co
+             }
+             for (const auto &[owner, id] : actions) {
+                 if (owner == m.package.id && action_context && !m.failed) {
+-                    auto &action = m.actions.at(id);
++                    std::string lookup_id = id;
++                    if (customizer::IsNumericRequest(owner, id)) {
++                        lookup_id = id.substr(0, id.find(':'));
++                    }
++                    auto &action = m.actions.at(lookup_id);
+                     if (action.native) {
+                         impl_->NativeCallback(m, world, query_game, commit_game, 0, id.c_str());
+                     } else {
++                        if (customizer::IsNumericRequest(owner, id)) {
++                            const auto separator = id.find(':');
++                            const int amount = std::stoi(id.substr(separator + 1));
++                            const std::string key = id.substr(0, separator) + "_amount";
++                            (*m.state)["values"][key] = amount;
++                        }
+                         impl_->Call(m, "menu action", world, money, read_game, query_game, commit_game, action.reference);
+                     }
+                     action.result = m.failed ? "Failed. See module diagnostics." : "Completed.";
+@@ -1260,7 +1277,30 @@ bool Runtime::QueueAction(std::string_view owner, std::string_view id, std::stri
+             if (m->package.id != owner || m->failed) {
+                 continue;
+             }
+-            const auto found = m->actions.find(std::string(id));
++            std::string action_id(id);
++            if (customizer::IsNumericRequest(owner, action_id)) {
++                const auto separator = action_id.find(':');
++                const std::string value = action_id.substr(separator + 1);
++                const std::string name = action_id.substr(0, separator);
++                const bool valid = !value.empty() && value.size() <= 5 &&
++                    std::all_of(value.begin(), value.end(), [](unsigned char c) {
++                        return c >= '0' && c <= '9';
++                    });
++                if (!valid) {
++                    error = "Invalid numeric amount.";
++                    return false;
++                }
++                const int amount = std::stoi(value);
++                const auto *spec = customizer::Find(name);
++                const int minimum = spec->minimum;
++                const int maximum = spec->maximum;
++                if (amount < minimum || amount > maximum) {
++                    error = "Numeric amount is outside the allowed range.";
++                    return false;
++                }
++                action_id = name;
++            }
++            const auto found = m->actions.find(action_id);
+             if (found != m->actions.end()) {
+                 impl_->pending_actions.push_back(request);
+                 found->second.result = "Queued for gameplay.";
+diff --git a/port/src/mods/runtime.hpp b/port/src/mods/runtime.hpp
+index f3e68f282a9c3bcdf4f036ccedab5b39719b9eab..a31a388d3c94241ee955ea18fdbd3669220aec6c 100644
+--- a/port/src/mods/runtime.hpp
++++ b/port/src/mods/runtime.hpp
+@@ -80,4 +80,5 @@ private:
+ 
+ Runtime &Scripts();
+ void     TickGame();
++int      JoinedCharacterCount();
+ } // namespace mods
+diff --git a/port/src/mods/weapon_browser.cpp b/port/src/mods/weapon_browser.cpp
+new file mode 100644
+index 0000000000000000000000000000000000000000..cbd2902521fd7f6575dff388fcb0bc4c9de99074
+--- /dev/null
++++ b/port/src/mods/weapon_browser.cpp
+@@ -0,0 +1,82 @@
++#include "weapon_browser.hpp"
++
++#include "battlemenu/internal.hpp"
++#include "customizer.hpp"
++#include "retail_inventory.hpp"
++#include "savedata.hpp"
++#include "weapon_tree.hpp"
++#include "menu.hpp"
++
++namespace mods::weapons {
++namespace {
++constexpr const char *owner = "chronicle.customizer";
++std::string Name(int item) {
++    return btlmenu_detail::DecodeItemNamePort(item, "Weapon #" + std::to_string(item));
++}
++
++ActionStatus Message(std::string text) {
++    return {owner, "inspect:message", "Build-up Tree", std::move(text), {}, false};
++}
++
++} // namespace
++
++bool TreeEnabled() {
++    return !Scripts().Actions(owner).empty();
++}
++
++bool HandleTreeAction(int options) {
++    if (!TreeEnabled() || WepMenu.state != WEP_STATE_IDLE) return false;
++    const auto rows = ActionRows(options, true);
++    const auto found = std::find(rows.begin(), rows.end(), WepMenu.board.cursor);
++    if (GamePad.Down(PAD_UP | PAD_DOWN)) {
++        int index = found == rows.end() ? 0 : static_cast<int>(found - rows.begin());
++        index = (index + (GamePad.Down(PAD_UP) ? -1 : 1) + static_cast<int>(rows.size())) % static_cast<int>(rows.size());
++        WepMenu.board.cursor = rows[index];
++        return true;
++    }
++    if (WepMenu.board.cursor == TreeAction && GamePad.Down(PAD_CROSS)) {
++        menu::OpenWeaponTree(WepMenu.chara, WepMenu.weapon_slot);
++        ComMenuSePlay(MENU_SOUND_CONFIRM);
++        return true;
++    }
++    return false;
++}
++
++std::vector<ActionStatus> Tree(int character, int slot) {
++    if (!customizer::CharacterUnlocked(character, JoinedCharacterCount()) || slot < 0 || slot >= 11) {
++        return {Message("Weapon unavailable. Return to the weapon list.")};
++    }
++    const auto &s = *SaveData->GetDngStatus();
++    auto held = s.chara_weapons[character][slot];
++    if (held.item_no <= ITEM_WEAPON_SLOT_EMPTY || held.item_no >= ITEM_WEAPON_END) {
++        return {Message("That weapon slot is empty. Return to the weapon list.")};
++    }
++    try {
++        const auto nodes = BuildTree(held.item_no, retail::BuildUpTargets);
++        std::vector<ActionStatus> rows;
++        for (const auto &node : nodes) {
++            const auto next = retail::BuildUpTargets(node.item);
++            const auto *d = GetWeaponData(node.item);
++            if (!d || d->owner != character) throw std::runtime_error("Invalid weapon branch owner");
++            std::string body = node.depth == 0
++                ? "SELECTED WEAPON\n" + Name(held.item_no) + "\n\nBUILD-UP TREE\nIndented rows show the future paths. Move up/down to explore each branch."
++                : "FROM\n" + Name(node.parent) + "\n\nBUILDS INTO\n" + Name(node.item);
++            if (node.parent == ITEM_WEAPON_MARDAN_EINS || node.parent == ITEM_WEAPON_MARDAN_TWEI) {
++                body += "\n\nSpecial route: catch " + std::to_string(node.parent == ITEM_WEAPON_MARDAN_EINS ? 5 : 15) + " fish.";
++            }
++            body += "\n\nNEXT BRANCHES";
++            for (int target : next) body += "\n> " + Name(target);
++            if (next.empty()) body += "\nFinal weapon - no further build-up.";
++            if (node.cycle) body += "\nRepeated link: expansion stopped.";
++            if (nodes.size() >= 256) body += "\nTree display limit reached.";
++            body += "\n\nPreview only. Use the normal weapon menu to build up.";
++            rows.push_back({owner, "inspect:" + std::to_string(rows.size()),
++                            std::string(std::min(node.depth, 5) * 2, ' ') + (node.depth ? "> " : "") + Name(node.item),
++                            std::move(body), {}, true});
++        }
++        return rows;
++    } catch (const std::exception &e) {
++        return {Message(std::string("Cannot inspect this weapon: ") + e.what())};
++    }
++}
++} // namespace mods::weapons
+diff --git a/port/src/mods/weapon_browser.hpp b/port/src/mods/weapon_browser.hpp
+new file mode 100644
+index 0000000000000000000000000000000000000000..a1504a4380a8332abc8d9c6e1da1e45ebcfc5b52
+--- /dev/null
++++ b/port/src/mods/weapon_browser.hpp
+@@ -0,0 +1,8 @@
++#pragma once
++#include "runtime.hpp"
++
++namespace mods::weapons {
++std::vector<ActionStatus> Tree(int character, int slot);
++bool TreeEnabled();
++bool HandleTreeAction(int options);
++} // namespace mods::weapons
+diff --git a/port/src/mods/weapon_tree.hpp b/port/src/mods/weapon_tree.hpp
+new file mode 100644
+index 0000000000000000000000000000000000000000..cd3496aaa9e6cac976a09734544a77bef6c06d94
+--- /dev/null
++++ b/port/src/mods/weapon_tree.hpp
+@@ -0,0 +1,39 @@
++#pragma once
++#include <algorithm>
++#include <functional>
++#include <vector>
++
++namespace mods::weapons {
++inline constexpr int TreeAction = 7;
++
++inline std::vector<int> ActionRows(int options, bool tree_enabled) {
++    std::vector<int> rows{0, 1, 2, 3};
++    for (int bit = 1; bit <= 3; ++bit) {
++        if (options & (1 << bit)) rows.push_back(bit + 3);
++    }
++    if (tree_enabled) rows.push_back(TreeAction);
++    return rows;
++}
++
++struct TreeNode {
++    int item, parent, depth;
++    bool cycle;
++};
++
++// Keep merged branches visible, but stop cycles and bound work for malformed data.
++inline std::vector<TreeNode> BuildTree(int root, const std::function<std::vector<int>(int)> &targets) {
++    std::vector<TreeNode> nodes;
++    std::vector<int> path;
++    const auto visit = [&](auto &&self, int item, int parent, int depth) -> void {
++        if (nodes.size() >= 256 || depth > 32) return;
++        const bool cycle = std::find(path.begin(), path.end(), item) != path.end();
++        nodes.push_back({item, parent, depth, cycle});
++        if (cycle) return;
++        path.push_back(item);
++        for (int next : targets(item)) self(self, next, item, depth + 1);
++        path.pop_back();
++    };
++    visit(visit, root, -1, 0);
++    return nodes;
++}
++} // namespace mods::weapons
+diff --git a/port/src/platform/firstrun.cpp b/port/src/platform/firstrun.cpp
+index 6269959833362e3dc83938395a8b523426a76341..2b6e4615ba826ce706a8d6f8ce290eec1eb46b32 100644
+--- a/port/src/platform/firstrun.cpp
++++ b/port/src/platform/firstrun.cpp
+@@ -358,18 +358,24 @@ void PrintFlatpakHint(const fs::path &root) {
+ } // namespace
+ 
+ bool FirstRunDataMissing(const fs::path &root) {
++    // A stray file must not suppress the first-run setup. Check for the
++    // core assets read by the game rather than merely a non-empty directory.
++    // This is a startup sanity check, not a full disc-integrity verification.
+     std::error_code error;
+     if (!fs::is_directory(root, error)) {
+         return true;
+     }
+-    auto options = fs::directory_options::follow_directory_symlink | fs::directory_options::skip_permission_denied;
+-    for (fs::recursive_directory_iterator it(root, options, error), end; !error && it != end; it.increment(error)) {
+-        std::error_code entry_error;
+-        if (it->is_regular_file(entry_error)) {
+-            return false;
++    constexpr std::array<std::string_view, 2> required = {
++        "dun/pack/maindat.pac", "img/title.img"
++    };
++    for (std::string_view relative : required) {
++        const fs::path file = root / fs::path(relative);
++        error.clear();
++        if (!fs::is_regular_file(file, error) || fs::file_size(file, error) == 0 || error) {
++            return true;
+         }
+     }
+-    return true;
++    return false;
+ }
+ 
+ FirstRunOutcome FirstRunExtract(const fs::path &source, const fs::path &root,
+@@ -409,8 +415,23 @@ FirstRunOutcome FirstRunExtract(const fs::path &source, const fs::path &root,
+                 // The data check found root missing or without a file, so anything there is empty
+                 // directories.
+                 if (fs::exists(root)) {
+-                    if (!FirstRunDataMissing(root)) {
+-                        dcdata::Fail("{} gained files during the extraction; the extracted data is in {}",
++                    // A partial installation may contain files even though it
++                    // failed the startup sanity check. Never overwrite it.
++                    std::error_code scan_error;
++                    bool has_files = false;
++                    auto opts = fs::directory_options::skip_permission_denied;
++                    for (fs::recursive_directory_iterator it(root, opts, scan_error), end;
++                         !scan_error && it != end; it.increment(scan_error)) {
++                        std::error_code entry_error;
++                        if (it->is_regular_file(entry_error)) {
++                            has_files = true;
++                            break;
++                        }
++                    }
++                    if (has_files || scan_error) {
++                        dcdata::Fail("{} already contains files; to avoid overwriting them, "
++                                     "the extracted data was left in {}. Back up or rename the "
++                                     "existing data folder before retrying.",
+                                      PathsDisplay(root), PathsDisplay(target));
+                     }
+                     fs::remove_all(root);
+diff --git a/ps2/src/battlemenu.cpp b/ps2/src/battlemenu.cpp
+index 2d6df0f10aec61bcdc3864f6af887c7a665bc9b1..916ea589207b5cbe4b209032d36fd2741178376b 100644
+--- a/ps2/src/battlemenu.cpp
++++ b/ps2/src/battlemenu.cpp
+@@ -19,6 +19,9 @@
+ #endif
+ 
+ #include "battlemenu.hpp"
++#ifdef PORT
++#include "weapon_tree_port.hpp"
++#endif
+ 
+ #include <cmath>
+ #include <cstdio>
+@@ -3630,6 +3633,12 @@ static void ExitWeaponMenuSelect() {
+ }
+ 
+ void WeaponMenuSelect() {
++#ifdef PORT
++    if (mods::menu::IsWeaponTreeOpen()) {
++        mods::menu::RunWeaponTree();
++        return;
++    }
++#endif
+     int direction = -1;
+ 
+     switch (WepMenu.state) {
+@@ -4165,6 +4174,11 @@ static int WeaponSelectKey() {
+     int result = 0;
+     int chara_num = 6;
+     int prev_chara = WepMenu.chara;
++#ifdef PORT
++    if (WepMenu.mode == WEP_MENU_ACTION && mods::weapons::HandleTreeAction(NowWeaponStatusValue(GetNowSelectWeapon()))) {
++        return 0;
++    }
++#endif
+ 
+     switch (WepMenu.mode) {
+         case WEP_MENU_LIST: {
+diff --git a/tools/tests/customizer_actions.lua b/tools/tests/customizer_actions.lua
+new file mode 100644
+index 0000000000000000000000000000000000000000..e843a8e53697f82ffd9392b0e1f341a957fd220a
+--- /dev/null
++++ b/tools/tests/customizer_actions.lua
+@@ -0,0 +1,64 @@
++-- Run with the bundled Lua interpreter from the repository root.
++local actions, values, calls, money = {}, {}, {}, 0
++chronicle = {
++    action = function(id, title, description, callback)
++        assert(not actions[id], "duplicate action: " .. id)
++        actions[id] = {title = title, run = callback}
++    end,
++    get = function(key) return values[key] end,
++    call = function(operation, arguments)
++        calls[#calls + 1] = {operation = operation, arguments = arguments}
++    end,
++    add_money = function(amount)
++        assert(math.type(amount) == "integer" and amount >= 1 and amount <= 32767)
++        money = money + amount
++    end,
++}
++dofile(arg[1] or "examples/mods/chronicle-customizer/main.lua")
++local count = 0
++for _ in pairs(actions) do count = count + 1 end
++assert(count == 13)
++
++local names = {"Toan", "Xiao", "Goro", "Ruby", "Ungaga", "Osmond"}
++for index, name in ipairs(names) do
++    for _, stat in ipairs({"hp", "def"}) do
++        local key = name:lower() .. "_" .. stat
++        local field = stat == "hp" and "max_hp" or "defense"
++        local operation = "player." .. field .. "_set"
++        local minimum = stat == "hp" and 1 or 0
++        assert(actions[key].title == name .. " - " .. stat:upper())
++        for _, value in ipairs({minimum, 123.75, 32767, "456"}) do
++            values[key .. "_amount"] = value
++            calls = {}
++            actions[key].run({})
++            assert(#calls == 1, key)
++            local args = calls[1].arguments
++            assert(calls[1].operation == operation, key)
++            assert(args.character == index - 1, key)
++            assert(args[field] == math.floor(tonumber(value)), key)
++            assert(math.type(args[field]) == "integer", key)
++        end
++        for _, invalid in ipairs({minimum - 1, 32768, "invalid", false}) do
++            values[key .. "_amount"] = invalid
++            calls = {}
++            actions[key].run({})
++            assert(#calls == 0, key)
++        end
++        values[key .. "_amount"] = nil
++        actions[key].run({})
++        assert(#calls == 0, key)
++    end
++end
++for _, amount in ipairs({1, 32767, 32768, 65535}) do
++    values.custom_gilda_amount = amount
++    money = 0
++    actions.custom_gilda.run({})
++    assert(money == amount)
++end
++for _, amount in ipairs({0, -1, 65536, "invalid"}) do
++    values.custom_gilda_amount = amount
++    money = 0
++    actions.custom_gilda.run({})
++    assert(money == 0)
++end
++print("PASS: 13 registered actions; six character targets; integer HP/DEF; bounds; Gilda chunking")
+diff --git a/tools/tests/customizer_numeric.cpp b/tools/tests/customizer_numeric.cpp
+new file mode 100644
+index 0000000000000000000000000000000000000000..4c7d00a7fab43e988d7b8d98cb469939e97f224c
+--- /dev/null
++++ b/tools/tests/customizer_numeric.cpp
+@@ -0,0 +1,35 @@
++#include "mods/customizer.hpp"
++
++#include <cassert>
++#include <string>
++
++int main() {
++    using namespace mods::customizer;
++    assert(actions.size() == 13);
++    for (int joined = 0; joined <= 6; ++joined) {
++        for (int character = 0; character < 6; ++character) {
++            assert(CharacterUnlocked(character, joined) == (character < joined));
++        }
++    }
++    assert(!CharacterUnlocked(-1, 6));
++    assert(!CharacterUnlocked(6, 7));
++    assert(!CharacterUnlocked(0, -1));
++    const std::array<std::string_view, 6> expected{"toan", "xiao", "goro", "ruby", "ungaga", "osmond"};
++    for (std::size_t i = 0; i < characters.size(); ++i) {
++        assert(characters[i].key == expected[i]);
++        assert(Find(std::string(characters[i].key) + "_hp"));
++        assert(Find(std::string(characters[i].key) + "_def"));
++    }
++    for (const auto &action : actions) {
++        assert(Find(action.id) == &action);
++        assert(action.minimum == (action.id.ends_with("_def") ? 0 : 1));
++        assert(action.maximum == (action.id == "custom_gilda" ? 65535 : 32767));
++        const auto request = std::string(action.id) + ":123";
++        assert(IsNumericRequest("chronicle.customizer", request));
++        assert(!IsNumericRequest("other.mod", request));
++        assert(!IsNumericRequest("chronicle.customizer", action.id));
++    }
++    assert(!Find("unknown_hp"));
++    assert(!IsNumericRequest("chronicle.customizer", "unknown_hp:123"));
++    assert(!IsNumericRequest("chronicle.customizer", "xiao_hp_extra:123"));
++}
+diff --git a/tools/tests/customizer_weapon_tree.cpp b/tools/tests/customizer_weapon_tree.cpp
+new file mode 100644
+index 0000000000000000000000000000000000000000..eda38936f14f22031a19633173bed7f00a11907b
+--- /dev/null
++++ b/tools/tests/customizer_weapon_tree.cpp
+@@ -0,0 +1,29 @@
++#include "mods/weapon_tree.hpp"
++#include <cassert>
++#include <map>
++
++int main() {
++    using mods::weapons::BuildTree;
++    for (int mask = 0; mask < 8; ++mask) {
++        const auto normal = mods::weapons::ActionRows(mask << 1, false);
++        const auto extended = mods::weapons::ActionRows(mask << 1, true);
++        assert(extended.size() == normal.size() + 1);
++        assert(extended.back() == mods::weapons::TreeAction);
++        assert(std::equal(normal.begin(), normal.end(), extended.begin()));
++        for (int i = 0; i < 4; ++i) assert(normal[i] == i);
++    }
++    std::map<int, std::vector<int>> links{{1, {2, 3}}, {2, {4}}, {3, {4}}};
++    auto tree = BuildTree(1, [&](int item) { return links[item]; });
++    assert(tree.size() == 5);
++    assert(tree[0].item == 1 && tree[0].depth == 0 && tree[0].parent == -1);
++    assert(tree[1].item == 2 && tree[1].parent == 1 && tree[1].depth == 1);
++    assert(tree[2].item == 4 && tree[2].parent == 2 && tree[2].depth == 2);
++    assert(tree[3].item == 3 && tree[4].item == 4 && tree[4].parent == 3);
++    assert(BuildTree(9, [](int) { return std::vector<int>{}; }).size() == 1);
++    tree = BuildTree(1, [](int item) { return std::vector<int>{item == 1 ? 2 : 1}; });
++    assert(tree.size() == 3 && tree.back().cycle);
++    tree = BuildTree(1, [](int item) { return std::vector<int>{item + 1}; });
++    assert(tree.size() == 33);
++    tree = BuildTree(1, [](int item) { return std::vector<int>{item + 1, item + 2}; });
++    assert(tree.size() == 256);
++}

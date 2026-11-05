@@ -1,0 +1,10 @@
+/build/
+/dist/
+/.venv/
+__pycache__/
+*.pyc
+*.bak
+*.exe
+*.dll
+*.zip
+*.iso
